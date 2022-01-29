@@ -115,7 +115,7 @@ resource "aws_sqs_queue" "queue_with_kms" {
 }
 
 resource "aws_sqs_queue" "queue_with_no_policy" {
-  count = length(var.kms_alias) == 0 && length(var.kms_key) == 0 && length(var.redrive_arn) == 0 && length(var.policy) == 0 ? 1 : 0
+  count = length(var.kms_alias) == 0 && length(var.kms_key) == 0 && length(var.kms_existing_alias) == 0 length(var.redrive_arn) == 0 && length(var.policy) == 0 ? 1 : 0
   name  = var.name
 
   visibility_timeout_seconds        = var.visibility_timeout_seconds
