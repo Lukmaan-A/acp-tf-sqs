@@ -344,7 +344,7 @@ resource "aws_iam_user" "sqs_with_kms_iam_user" {
 }
 
 resource "aws_iam_user_policy" "sqs_user_policy" {
-  count = length(var.kms_alias) == 0 || length(var.kms_existing_alias) == 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? var.number_of_users : 0
+  count = (length(var.kms_alias) == 0 || length(var.kms_existing_alias) == 0) && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? var.number_of_users : 0
 
   name   = "${var.iam_user_policy_name}SQSPolicy"
   user   = element(aws_iam_user.sqs_iam_user.*.name, count.index)
@@ -376,7 +376,7 @@ resource "aws_iam_user_policy" "sqs_with_kms_and_redrive_user_policy" {
 }
 
 data "aws_iam_policy_document" "sqs_policy_document" {
-  count     = length(var.kms_alias) == 0 && length(var.kms_existing_alias) == 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  count     = length(var.kms_alias) == 0 || length(var.kms_existing_alias) == 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
   policy_id = "${var.sqs_iam_user}SQSPolicy"
 
   statement {
