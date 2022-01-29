@@ -74,8 +74,8 @@ variable "kms_key" {
   default     = ""
 }
 
-variable "kms_existing_alias" {
-  description = "KMS key alias name for SQS when using an existing KMS key"
+variable "kms_existing_key" {
+  description = "KMS key ID name for SQS when using an existing KMS key"
   default     = ""
 }
 
