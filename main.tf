@@ -87,7 +87,7 @@ resource "aws_sqs_queue" "queue" {
 }
 
 resource "aws_sqs_queue" "queue_with_kms" {
-  count = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  count = length(var.kms_alias) != 0 || length(var.existing_kms_key) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
   name  = var.name
 
   visibility_timeout_seconds        = var.visibility_timeout_seconds
@@ -97,7 +97,7 @@ resource "aws_sqs_queue" "queue_with_kms" {
   receive_wait_time_seconds         = var.receive_wait_time_seconds
   fifo_queue                        = var.fifo_queue
   content_based_deduplication       = var.content_based_deduplication
-  kms_master_key_id                 = aws_kms_key.sqs_kms_key[0].key_id
+  kms_master_key_id                 = length(var.kms_alias) != 0 ? aws_kms_key.sqs_kms_key[0].key_id: var.existing_kms_key
   kms_data_key_reuse_period_seconds = 300
 
   tags = merge(
@@ -142,7 +142,7 @@ resource "aws_sqs_queue" "queue_with_no_policy" {
 }
 
 resource "aws_sqs_queue" "queue_with_kms_key_and_no_policy" {
-  count = length(var.kms_alias) == 0 && length(var.kms_key) != 0 && length(var.policy) == 0 ? 1 : 0
+  count = length(var.kms_alias) == 0  && length(var.kms_key) != 0 && length(var.policy) == 0 ? 1 : 0
   name  = var.name
 
   visibility_timeout_seconds        = var.visibility_timeout_seconds
@@ -170,7 +170,7 @@ resource "aws_sqs_queue" "queue_with_kms_key_and_no_policy" {
 }
 
 resource "aws_sqs_queue" "queue_with_kms_and_no_policy" {
-  count = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) == 0 ? 1 : 0
+  count = length(var.kms_alias) != 0  && length(var.redrive_arn) == 0 && length(var.policy) == 0 ? 1 : 0
   name  = var.name
 
   visibility_timeout_seconds        = var.visibility_timeout_seconds
@@ -328,7 +328,7 @@ resource "aws_iam_user" "sqs_iam_user" {
 }
 
 resource "aws_iam_user" "sqs_with_kms_iam_user" {
-  count = length(var.policy) != 0 && length(var.kms_alias) != 0 ? var.number_of_users : 0
+  count = length(var.policy) != 0 && length(var.kms_alias) != 0 || length(var.existing_kms_key) != 0 ? var.number_of_users : 0
 
   name = "${var.sqs_iam_user}${var.number_of_users != 1 ? "-${count.index}" : ""}"
   path = "/"
@@ -352,11 +352,11 @@ resource "aws_iam_user_policy" "sqs_user_policy" {
 }
 
 resource "aws_iam_user_policy" "sqs_with_kms_user_policy" {
-  count = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? var.number_of_users : 0
+  count = length(var.kms_alias) != 0 || length(var.existing_kms_key) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? var.number_of_users : 0
 
   name   = "${var.iam_user_policy_name}SQSPolicy"
   user   = element(aws_iam_user.sqs_with_kms_iam_user.*.name, count.index)
-  policy = data.aws_iam_policy_document.sqs_with_kms_policy_document[0].json
+  policy = var.kms_alias != 0 ? data.aws_iam_policy_document.sqs_with_kms_policy_document[0].json: data.aws_iam_policy_document.sqs_with_existing_kms_policy_document[0].json
 }
 
 resource "aws_iam_user_policy" "sqs_with_redrive_user_policy" {
@@ -426,7 +426,7 @@ data "aws_iam_policy_document" "sqs_policy_document" {
 }
 
 data "aws_iam_policy_document" "sqs_with_kms_policy_document" {
-  count     = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  count     = length(var.kms_alias) != 0  && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
   policy_id = "${var.sqs_iam_user}SQSPolicy"
 
   statement {
@@ -457,6 +457,78 @@ data "aws_iam_policy_document" "sqs_with_kms_policy_document" {
     resources = [
       aws_kms_key.sqs_kms_key[0].arn,
       "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alias/${var.kms_alias}",
+    ]
+
+    actions = [
+      "kms:ReEncrypt",
+      "kms:GetKeyRotationStatus",
+      "kms:GetKeyPolicy",
+      "kms:GenerateRandom",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:GenerateDataKey",
+      "kms:Encrypt",
+      "kms:DescribeKey",
+      "kms:Decrypt",
+    ]
+  }
+
+  # this is a deny policy so that it overrides the other policies
+  dynamic "statement" {
+    for_each = length(var.cidr_blocks) != 0 ? [1] : []
+
+    content {
+      sid    = "IAMSQSIPRestriction"
+      effect = "Deny"
+
+      resources = [
+        aws_sqs_queue.queue_with_kms[0].arn,
+      ]
+
+      actions = [
+        "SQS:*"
+      ]
+
+      condition {
+        test     = "NotIpAddress"
+        variable = "aws:SourceIp"
+        values   = var.cidr_blocks
+      }
+    }
+  }
+}
+
+data "aws_iam_policy_document" "sqs_with_existing_kms_policy_document" {
+  count     = length(var.existing_kms_key) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  policy_id = "${var.sqs_iam_user}SQSPolicy"
+
+  statement {
+    sid    = "IAMSQSPermissions"
+    effect = "Allow"
+
+    resources = [
+      aws_sqs_queue.queue_with_kms[0].arn,
+    ]
+
+    actions = concat([
+      "sqs:AddPermission",
+      "sqs:ChangeMessageVisibility*",
+      "sqs:DeleteMessage*",
+      "sqs:Get*",
+      "sqs:List*",
+      "sqs:PurgeQueue",
+      "sqs:ReceiveMessage",
+      "sqs:RemovePermission",
+      "sqs:Send*",
+    ], var.enable_set_attributes ? ["sqs:SetQueueAttributes"] : [])
+  }
+
+  statement {
+    sid    = "KMSPermissions"
+    effect = "Allow"
+
+    resources = [
+      aws_kms_key.sqs_kms_key[0].arn,
+      "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/${var.existing_kms_key}",
     ]
 
     actions = [
@@ -651,13 +723,13 @@ data "aws_iam_policy_document" "sqs_default_policy_document" {
 }
 
 resource "aws_sqs_queue_policy" "sqs_with_kms_policy" {
-  count     = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  count     = length(var.kms_alias) != 0 || length(var.existing_kms_key) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
   queue_url = aws_sqs_queue.queue_with_kms[0].id
   policy    = var.policy != "default" ? var.policy : data.aws_iam_policy_document.sqs_with_kms_default_policy_document[0].json
 }
 
 data "aws_iam_policy_document" "sqs_with_kms_default_policy_document" {
-  count   = length(var.kms_alias) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
+  count   = length(var.kms_alias) != 0 || length(var.existing_kms_key) != 0 && length(var.redrive_arn) == 0 && length(var.policy) != 0 ? 1 : 0
   version = "2012-10-17"
   statement {
     sid    = "SQS Permissions"
