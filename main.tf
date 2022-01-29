@@ -527,7 +527,6 @@ data "aws_iam_policy_document" "sqs_with_existing_kms_policy_document" {
     effect = "Allow"
 
     resources = [
-      var.kms_existing_key,
       "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/${var.kms_existing_key}",
     ]
 
